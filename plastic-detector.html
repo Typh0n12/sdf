@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Plastic Detector — Prediction Logger</title>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.7.4/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8/dist/teachablemachine-image.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #f5f5f5; color: #1a1a1a; padding: 2rem; }
+  h1 { font-size: 1.4rem; font-weight: 500; margin-bottom: 0.25rem; }
+  p.sub { font-size: 0.9rem; color: #666; margin-bottom: 1.5rem; }
+
+  .setup-box { background: #fff; border: 0.5px solid #ddd; border-radius: 12px; padding: 1.25rem 1.5rem; margin-bottom: 1.5rem; }
+  .setup-box h2 { font-size: 1rem; font-weight: 500; margin-bottom: 0.75rem; }
+  .setup-box input[type="text"] { width: 100%; padding: 0.5rem 0.75rem; border: 0.5px solid #ccc; border-radius: 8px; font-size: 0.9rem; margin-bottom: 0.5rem; }
+  .setup-box small { font-size: 0.8rem; color: #888; display: block; margin-bottom: 0.75rem; }
+
+  .main { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+  @media (max-width: 700px) { .main { grid-template-columns: 1fr; } }
+
+  .card { background: #fff; border: 0.5px solid #ddd; border-radius: 12px; padding: 1.25rem; }
+  .card h2 { font-size: 1rem; font-weight: 500; margin-bottom: 1rem; }
+
+  video, canvas { width: 100%; border-radius: 8px; background: #eee; display: block; }
+  #webcam-container { position: relative; margin-bottom: 1rem; }
+
+  .prediction-bar { margin-bottom: 0.75rem; }
+  .prediction-bar .label { display: flex; justify-content: space-between; font-size: 0.85rem; margin-bottom: 0.25rem; }
+  .bar-track { background: #eee; border-radius: 99px; height: 10px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 99px; transition: width 0.15s ease; }
+  .bar-fill.plastic { background: #378ADD; }
+  .bar-fill.not-plastic { background: #1D9E75; }
+
+  .result-badge { display: inline-block; font-size: 0.85rem; font-weight: 500; padding: 0.3rem 0.75rem; border-radius: 99px; margin-bottom: 1rem; }
+  .result-badge.plastic { background: #E6F1FB; color: #185FA5; }
+  .result-badge.not-plastic { background: #E1F5EE; color: #0F6E56; }
+  .result-badge.waiting { background: #f1efe8; color: #5f5e5a; }
+
+  .log-controls { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+  .btn { padding: 0.45rem 1rem; border: 0.5px solid #ccc; border-radius: 8px; background: #fff; font-size: 0.85rem; cursor: pointer; font-family: inherit; }
+  .btn:hover { background: #f5f5f5; }
+  .btn.correct { border-color: #1D9E75; color: #0F6E56; }
+  .btn.correct:hover { background: #E1F5EE; }
+  .btn.incorrect { border-color: #E24B4A; color: #A32D2D; }
+  .btn.incorrect:hover { background: #FCEBEB; }
+  .btn.primary { background: #1a1a1a; color: #fff; border-color: #1a1a1a; }
+  .btn.primary:hover { background: #333; }
+  .btn:disabled { opacity: 0.4; cursor: default; }
+
+  .log-entry { font-size: 0.82rem; padding: 0.5rem 0; border-bottom: 0.5px solid #eee; display: grid; grid-template-columns: auto 1fr auto auto; gap: 0.5rem; align-items: center; }
+  .log-entry:last-child { border-bottom: none; }
+  .tag { font-size: 0.75rem; padding: 0.15rem 0.5rem; border-radius: 99px; font-weight: 500; }
+  .tag.plastic { background: #E6F1FB; color: #185FA5; }
+  .tag.not-plastic { background: #E1F5EE; color: #0F6E56; }
+  .tag.correct { background: #EAF3DE; color: #3B6D11; }
+  .tag.incorrect { background: #FCEBEB; color: #A32D2D; }
+  .log-scroll { max-height: 320px; overflow-y: auto; }
+
+  .stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.75rem; margin-bottom: 1rem; }
+  .stat { background: #f5f5f5; border-radius: 8px; padding: 0.6rem 0.75rem; text-align: center; }
+  .stat .num { font-size: 1.4rem; font-weight: 500; }
+  .stat .lbl { font-size: 0.75rem; color: #888; }
+
+  #start-btn { width: 100%; margin-bottom: 1rem; }
+
+  .export-row { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
+
+  #setup-section { }
+  #app-section { display: none; }
+</style>
+</head>
+<body>
+
+<h1>Plastic Detector</h1>
+<p class="sub">Teachable Machine prediction logger</p>
+
+<div id="setup-section">
+  <div class="setup-box">
+    <h2>Step 1 — paste your model URLs</h2>
+    <p style="font-size:0.85rem;color:#555;margin-bottom:0.75rem;">
+      Upload your 3 files (<strong>model.json</strong>, <strong>weights.bin</strong>, <strong>metadata.json</strong>) somewhere accessible — 
+      GitHub raw URLs work great. Then paste the base URL below (the folder path, not the file itself).
+    </p>
+    <input type="text" id="model-url" placeholder="https://raw.githubusercontent.com/you/repo/main/model/" />
+    <small>Example: https://raw.githubusercontent.com/yourname/yourrepo/main/model/</small>
+    <button class="btn primary" onclick="startApp()">Load model &amp; start camera</button>
+    <p id="load-error" style="color:#A32D2D;font-size:0.82rem;margin-top:0.5rem;display:none;"></p>
+  </div>
+  <div class="setup-box" style="background:#fffbe6;border-color:#e0d28a;">
+    <h2 style="color:#633806;">How to host your files for free</h2>
+    <ol style="font-size:0.85rem;color:#444;padding-left:1.25rem;line-height:1.8;">
+      <li>Go to <a href="https://github.com" target="_blank" style="color:#185FA5;">github.com</a> and sign in (or create a free account)</li>
+      <li>Click <strong>+</strong> → <strong>New repository</strong>, name it anything, make it <strong>Public</strong></li>
+      <li>Click <strong>Add file → Upload files</strong> and upload all 3 files</li>
+      <li>Open each file, click <strong>Raw</strong>, and copy the URL up to the last <code>/</code></li>
+      <li>Paste that base URL above</li>
+    </ol>
+  </div>
+</div>
+
+<div id="app-section">
+  <div class="main">
+    <div>
+      <div class="card">
+        <h2>Camera</h2>
+        <div id="webcam-container">
+          <canvas id="canvas"></canvas>
+        </div>
+        <div id="prediction-bars"></div>
+        <div id="result-badge" class="result-badge waiting">Waiting…</div>
+        <div class="log-controls">
+          <button class="btn correct" id="btn-correct" onclick="logEntry(true)" disabled>✓ Correct</button>
+          <button class="btn incorrect" id="btn-incorrect" onclick="logEntry(false)" disabled>✗ Incorrect</button>
+        </div>
+        <small style="font-size:0.78rem;color:#888;">After each prediction, mark whether it was correct or not.</small>
+      </div>
+    </div>
+
+    <div>
+      <div class="card" style="margin-bottom:1.5rem;">
+        <h2>Accuracy summary</h2>
+        <div class="stats">
+          <div class="stat"><div class="num" id="stat-total">0</div><div class="lbl">Total</div></div>
+          <div class="stat"><div class="num" id="stat-correct">0</div><div class="lbl">Correct</div></div>
+          <div class="stat"><div class="num" id="stat-acc">—</div><div class="lbl">Accuracy</div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Prediction log</h2>
+        <div class="log-scroll" id="log-list">
+          <p style="font-size:0.82rem;color:#aaa;">No entries yet.</p>
+        </div>
+        <div class="export-row">
+          <button class="btn" onclick="exportCSV()">Download CSV</button>
+          <button class="btn" onclick="clearLog()">Clear log</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let model, webcam, maxPredictions;
+let currentPrediction = null;
+let logData = [];
+let correct = 0;
+
+async function startApp() {
+  const baseUrl = document.getElementById('model-url').value.trim().replace(/\/?$/, '/');
+  const errEl = document.getElementById('load-error');
+  errEl.style.display = 'none';
+
+  if (!baseUrl || baseUrl === '/') {
+    errEl.textContent = 'Please enter a model URL first.';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  const btn = document.querySelector('#setup-section .btn.primary');
+  btn.textContent = 'Loading…';
+  btn.disabled = true;
+
+  try {
+    model = await tmImage.load(baseUrl + 'model.json', baseUrl + 'metadata.json');
+    maxPredictions = model.getTotalClasses();
+
+    webcam = new tmImage.Webcam(340, 340, true);
+    await webcam.setup();
+    await webcam.play();
+
+    document.getElementById('setup-section').style.display = 'none';
+    document.getElementById('app-section').style.display = 'block';
+
+    document.getElementById('canvas').replaceWith(webcam.canvas);
+    webcam.canvas.style.borderRadius = '8px';
+    webcam.canvas.style.width = '100%';
+
+    buildBars();
+    window.requestAnimationFrame(loop);
+  } catch (e) {
+    errEl.textContent = 'Could not load model: ' + e.message + '. Double-check your URL ends with / and the files are public.';
+    errEl.style.display = 'block';
+    btn.textContent = 'Load model & start camera';
+    btn.disabled = false;
+  }
+}
+
+function buildBars() {
+  const container = document.getElementById('prediction-bars');
+  container.innerHTML = '';
+  const classes = model.getClassLabels ? model.getClassLabels() : Array.from({length: maxPredictions}, (_, i) => 'Class ' + i);
+  classes.forEach((label, i) => {
+    const cls = label.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+    container.innerHTML += `
+      <div class="prediction-bar">
+        <div class="label"><span>${label}</span><span id="pct-${i}">0%</span></div>
+        <div class="bar-track"><div class="bar-fill ${cls}" id="bar-${i}" style="width:0%"></div></div>
+      </div>`;
+  });
+}
+
+async function loop() {
+  webcam.update();
+  const predictions = await model.predict(webcam.canvas);
+
+  let best = predictions[0];
+  predictions.forEach(p => { if (p.probability > best.probability) best = p; });
+  currentPrediction = best.className;
+
+  predictions.forEach((p, i) => {
+    const pct = Math.round(p.probability * 100);
+    document.getElementById('bar-' + i).style.width = pct + '%';
+    document.getElementById('pct-' + i).textContent = pct + '%';
+  });
+
+  const badge = document.getElementById('result-badge');
+  const cls = currentPrediction.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+  badge.className = 'result-badge ' + cls;
+  badge.textContent = currentPrediction + ' (' + Math.round(best.probability * 100) + '%)';
+
+  document.getElementById('btn-correct').disabled = false;
+  document.getElementById('btn-incorrect').disabled = false;
+
+  window.requestAnimationFrame(loop);
+}
+
+function logEntry(wasCorrect) {
+  if (!currentPrediction) return;
+  const entry = {
+    time: new Date().toLocaleTimeString(),
+    prediction: currentPrediction,
+    correct: wasCorrect
+  };
+  logData.push(entry);
+  if (wasCorrect) correct++;
+
+  updateStats();
+  renderLog();
+
+  document.getElementById('btn-correct').disabled = true;
+  document.getElementById('btn-incorrect').disabled = true;
+  setTimeout(() => {
+    document.getElementById('btn-correct').disabled = false;
+    document.getElementById('btn-incorrect').disabled = false;
+  }, 800);
+}
+
+function updateStats() {
+  document.getElementById('stat-total').textContent = logData.length;
+  document.getElementById('stat-correct').textContent = correct;
+  document.getElementById('stat-acc').textContent = logData.length ? Math.round(correct / logData.length * 100) + '%' : '—';
+}
+
+function renderLog() {
+  const list = document.getElementById('log-list');
+  if (!logData.length) { list.innerHTML = '<p style="font-size:0.82rem;color:#aaa;">No entries yet.</p>'; return; }
+  list.innerHTML = [...logData].reverse().map((e, i) => {
+    const cls = e.prediction.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+    return `<div class="log-entry">
+      <span style="color:#aaa;font-size:0.78rem;">${e.time}</span>
+      <span class="tag ${cls}">${e.prediction}</span>
+      <span class="tag ${e.correct ? 'correct' : 'incorrect'}">${e.correct ? 'Correct' : 'Incorrect'}</span>
+    </div>`;
+  }).join('');
+}
+
+function clearLog() {
+  logData = []; correct = 0;
+  updateStats(); renderLog();
+}
+
+function exportCSV() {
+  if (!logData.length) { alert('No data to export yet.'); return; }
+  const rows = [['Time', 'Prediction', 'Correct']];
+  logData.forEach(e => rows.push([e.time, e.prediction, e.correct ? 'Yes' : 'No']));
+  const csv = rows.map(r => r.map(v => `"${v}"`).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'predictions.csv'; a.click();
+}
+</script>
+</body>
+</html>
